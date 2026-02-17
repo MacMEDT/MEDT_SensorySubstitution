@@ -31,6 +31,7 @@ def demo_pattern(mode):
     return [random.randint(0, 255) for _ in range(N)]
 
 def main():
+    #send frame via I2C to ESP32
     with SMBus(I2C_BUS) as bus:
         mode = 1
         while True:
