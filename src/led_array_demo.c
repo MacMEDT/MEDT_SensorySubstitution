@@ -130,8 +130,8 @@ apply_column_pwm_to_pca (void)
 void
 disable_all_rows (void)
 {
-  digitalWrite (row0_pin, LOW);
-  digitalWrite (row1_pin, LOW);
+  digitalWrite (row0_pin, HIGH);
+  digitalWrite (row1_pin, HIGH);
 }
 
 void
@@ -139,9 +139,9 @@ enable_row (uint8_t row)
 {
   disable_all_rows ();
   if (row == 0)
-    digitalWrite (row0_pin, HIGH);
+    digitalWrite (row0_pin, LOW);
   else if (row == 1)
-    digitalWrite (row1_pin, HIGH);
+    digitalWrite (row1_pin, LOW);
 }
 
 /* Pattern update logic.  */

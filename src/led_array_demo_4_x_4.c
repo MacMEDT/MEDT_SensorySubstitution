@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
 
 const uint8_t NUM_ROWS = 4;
 const uint8_t NUM_COLS = 4;
@@ -10,11 +11,9 @@ const uint8_t i2c_scl_pin = 22;
 const uint8_t i2c_sda_pin = 21;
 
 const uint8_t pca_addr = 0x40;
-const uint8_t pca_mode1 = 0x00;
-const uint8_t pca_prescale = 0xFE;
-const uint8_t pca_led0_on_l = 0x06;
 
 const uint8_t colChannels[NUM_COLS] = {1, 2, 3, 4};
+Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(pca_addr, Wire);
 
 const float pca_col_freq_hz = 1000.0f;
 
@@ -27,52 +26,16 @@ uint8_t intensities[NUM_ROWS][NUM_COLS] = {
 };
 
 unsigned long lastPatternChange = 0;
-const unsigned long patternIntervalMs = 1500;
-uint8_t patternIndex = 0;
+unsigned long patternIntervalMs = 10000;
+const uint8_t NUM_MODES = 6;
+uint8_t currentMode = 0;
 
 const uint32_t colHoldUs = 3000;
 
 /* ---------- PCA helpers ---------- */
 
-void pca_write_8(uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(pca_addr);
-  Wire.write(reg);
-  Wire.write(val);
-  Wire.endTransmission();
-}
-
-uint8_t pca_read_8(uint8_t reg) {
-  Wire.beginTransmission(pca_addr);
-  Wire.write(reg);
-  Wire.endTransmission();
-  Wire.requestFrom(pca_addr, (uint8_t)1);
-  if (Wire.available()) return Wire.read();
-  return 0;
-}
-
-void pca_set_pwm_freq(float freq_hz) {
-  float prescale_val = 25000000.0f / (4096.0f * freq_hz) - 1.0f;
-  uint8_t prescale = (uint8_t)(prescale_val + 0.5f);
-
-  uint8_t old_mode = pca_read_8(pca_mode1);
-  uint8_t sleep_mode = (old_mode & 0x7F) | 0x10;
-
-  pca_write_8(pca_mode1, sleep_mode);
-  pca_write_8(pca_prescale, prescale);
-  pca_write_8(pca_mode1, old_mode);
-  delay(5);
-  pca_write_8(pca_mode1, old_mode | 0xA1);
-}
-
 void pca_set_pwm(uint8_t channel, uint16_t on_count, uint16_t off_count) {
-  uint8_t reg = pca_led0_on_l + 4 * channel;
-  Wire.beginTransmission(pca_addr);
-  Wire.write(reg);
-  Wire.write(on_count & 0xFF);
-  Wire.write(on_count >> 8);
-  Wire.write(off_count & 0xFF);
-  Wire.write(off_count >> 8);
-  Wire.endTransmission();
+  pca.setPWM(channel, on_count, off_count);
 }
 
 void pca_set_duty(uint8_t channel, uint16_t duty) {
@@ -95,13 +58,13 @@ void disable_all_rows() {
 
 void disable_all_columns() {
   for (uint8_t c = 0; c < NUM_COLS; c++) {
-    pca_set_duty(colChannels[c], 0);
+    pca_set_duty(colChannels[c], 4095);
   }
 }
 
 void enable_column(uint8_t col) {
   disable_all_columns();
-  pca_set_duty(colChannels[col], 4095);
+  pca_set_duty(colChannels[col], 0);
 }
 
 void set_rows_for_column(uint8_t col) {
@@ -190,30 +153,43 @@ void set_pattern_5() {
   load_pattern(pattern);
 }
 
-void update_pattern() {
-  unsigned long now = millis();
-  if (now - lastPatternChange < patternIntervalMs) return;
-
-  lastPatternChange = now;
-  patternIndex = (patternIndex + 1) % 6;
-
-  Serial.print("Pattern index: ");
-  Serial.println(patternIndex);
-
-  switch (patternIndex) {
+void apply_mode(uint8_t mode) {
+  switch (mode) {
     case 0: set_pattern_0(); break;
     case 1: set_pattern_1(); break;
     case 2: set_pattern_2(); break;
     case 3: set_pattern_3(); break;
     case 4: set_pattern_4(); break;
     case 5: set_pattern_5(); break;
+    default: set_pattern_0(); break;
   }
+}
+
+void update_pattern() {
+  unsigned long now = millis();
+  if (now - lastPatternChange < patternIntervalMs) return;
+
+  lastPatternChange = now;
+  uint8_t nextMode = currentMode;
+  while (nextMode == currentMode) {
+    nextMode = (uint8_t)random(NUM_MODES);
+  }
+  currentMode = nextMode;
+  patternIntervalMs = (unsigned long)random(10000, 15001);
+
+  Serial.print("Mode: ");
+  Serial.print(currentMode);
+  Serial.print(" | Next switch in ms: ");
+  Serial.println(patternIntervalMs);
+
+  apply_mode(currentMode);
 }
 
 /* ---------- Arduino ---------- */
 
 void setup() {
   Serial.begin(115200);
+  randomSeed((unsigned long)micros());
 
   for (uint8_t i = 0; i < NUM_ROWS; i++) {
     pinMode(rowPins[i], OUTPUT);
@@ -223,11 +199,14 @@ void setup() {
 
   Wire.begin(i2c_sda_pin, i2c_scl_pin);
   delay(10);
-  pca_set_pwm_freq(pca_col_freq_hz);
+  pca.begin();
+  pca.setPWMFreq(pca_col_freq_hz);
 
   disable_all_columns();
 
-  set_pattern_0();
+  currentMode = (uint8_t)random(NUM_MODES);
+  patternIntervalMs = (unsigned long)random(10000, 15001);
+  apply_mode(currentMode);
 }
 
 void loop() {
